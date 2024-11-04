@@ -181,7 +181,8 @@ resource "aws_db_instance" "db_instance_a" {
 }
 
 resource "aws_secretsmanager_secret" "db_password" {
-  name = "db-password"
+  name = "password"
+
   tags = {
     Environment = "Prod"
     Owner       = "Marcos"
@@ -245,3 +246,47 @@ resource "aws_launch_template" "LT-lab04" {
     create_before_destroy = true
   }
 }
+
+# Creación del Application Load Balancer
+resource "aws_lb" "ALB-Lab4" {
+  name               = "ALB-Lab4"
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.Web_SG.id]
+  subnets            = module.vpc.public_subnets
+
+  enable_deletion_protection = false
+  idle_timeout               = 60
+
+  tags = {
+    Name = "ALB-Lab4"
+    Environment = "Prod"
+    Owner       = "Marcos"
+    Project     = "LAB04"
+  }
+}
+
+# Creación del Target Group para el ALB
+resource "aws_lb_target_group" "TG-Lab4" {
+  name        = "TG-Lab4"
+  port        = 80
+  protocol    = "HTTP"
+  vpc_id      = module.vpc.vpc_id
+  target_type = "instance"
+
+  health_check {
+    path                = "/"
+    protocol            = "HTTP"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
+  }
+
+  tags = {
+    Name = "TG-Lab4"
+    Environment = "Prod"
+    Owner       = "Marcos"
+    Project     = "LAB04"
+  }
+}
+
