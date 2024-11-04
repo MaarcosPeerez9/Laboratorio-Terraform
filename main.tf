@@ -50,6 +50,7 @@ resource "aws_iam_role" "ec2_ssm_role" {
   })
 }
 
+// Asignamos la política SSM al Rol
 resource "aws_iam_policy_attachment" "ssm_policy_attachment" {
   name       = "ssm-policy-attachment"
   roles      = [aws_iam_role.ec2_ssm_role.name]
@@ -247,6 +248,52 @@ resource "aws_launch_template" "LT-lab04" {
   }
 }
 
+# Endpoint de VPC para SSM
+resource "aws_vpc_endpoint" "ssm" {
+  vpc_id            = module.vpc.vpc_id
+  service_name      = "com.amazonaws.${var.region}.ssm"
+  vpc_endpoint_type = "Interface"
+  subnet_ids        = module.vpc.private_subnets
+
+  security_group_ids = [
+    aws_security_group.ssm_endpoint_sg.id
+  ]
+
+   tags = {
+    Name        = "Endpoint-SSM"
+    Environment = "Prod"
+    Owner       = "Marcos"
+    Project     = "LAB04"
+  }
+}
+
+resource "aws_security_group" "ssm_endpoint_sg" {
+  name        = "ssm-endpoint-sg"
+  description = "Security group para SSM VPC endpoint"
+  vpc_id      = module.vpc.vpc_id
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]  
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "SSM Endpoint SG"
+    Environment = "Prod"
+    Owner       = "Marcos"
+    Project     = "LAB04"
+  }
+}
+
 # Creación del Application Load Balancer
 resource "aws_lb" "ALB-Lab4" {
   name               = "ALB-Lab4"
@@ -359,3 +406,23 @@ resource "aws_route53_record" "web_record" {
 }
 */
 
+resource "aws_autoscaling_group" "ASG-Lab4" {
+  desired_capacity     = var.min_size
+  max_size             = var.max_size
+  min_size             = var.min_size
+  vpc_zone_identifier  = module.vpc.private_subnets
+
+  launch_template {
+    id      = aws_launch_template.LT-lab04.id
+    version = "$Latest"
+  }
+
+  target_group_arns = [aws_lb_target_group.TG-Lab4.arn]
+
+  health_check_type         = "EC2"
+  health_check_grace_period = 300
+
+  lifecycle {
+    create_before_destroy = true
+  }  
+}

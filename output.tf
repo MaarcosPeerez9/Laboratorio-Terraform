@@ -63,3 +63,7 @@ output "db_password_secret_version_id" {
   description = "ID de la versión del Secret en Secrets Manager para la contraseña de la base de datos"
   value       = aws_secretsmanager_secret_version.db_password.id
 }
+
+output "asg_id" {
+  value = aws_autoscaling_group.ASG-Lab4.id
+}

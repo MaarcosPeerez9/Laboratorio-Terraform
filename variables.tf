@@ -32,6 +32,12 @@ variable "enable_nat_gateway" {
   default     = true
 }
 
+variable "region" {
+  description = "AWS region where resources are created"
+  type        = string
+  default     = "us-east-1"
+}
+
 variable "instance_type" {
   description = "Tipo de instancia EC2"
   default     = "t2.micro"
