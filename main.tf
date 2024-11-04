@@ -168,7 +168,7 @@ resource "aws_db_instance" "db_instance_a" {
   username               = var.db_username
   password               = aws_secretsmanager_secret_version.db_password.secret_string
   db_subnet_group_name   = aws_db_subnet_group.Postgres_DB.name
-  vpc_security_group_ids = [module.vpc.default_security_group_id]
+  vpc_security_group_ids = [aws_security_group.Database_SG.id]
   multi_az               = true
   publicly_accessible    = false
   skip_final_snapshot    = true
@@ -201,7 +201,7 @@ resource "aws_launch_template" "LT-lab04" {
   image_id      = var.ami_id
   instance_type = var.instance_type
 
-    tags = {
+  tags = {
     Name        = "LT-lab04"
     Environment = "Prod"
     Owner       = "Marcos"
@@ -251,14 +251,14 @@ resource "aws_launch_template" "LT-lab04" {
 resource "aws_lb" "ALB-Lab4" {
   name               = "ALB-Lab4"
   load_balancer_type = "application"
-  security_groups    = [aws_security_group.Web_SG.id]
+  security_groups    = [aws_security_group.LoadBalancer_SG.id, aws_security_group.Web_SG.id]
   subnets            = module.vpc.public_subnets
 
   enable_deletion_protection = false
   idle_timeout               = 60
 
   tags = {
-    Name = "ALB-Lab4"
+    Name        = "ALB-Lab4"
     Environment = "Prod"
     Owner       = "Marcos"
     Project     = "LAB04"
@@ -283,10 +283,79 @@ resource "aws_lb_target_group" "TG-Lab4" {
   }
 
   tags = {
-    Name = "TG-Lab4"
+    Name        = "TG-Lab4"
     Environment = "Prod"
     Owner       = "Marcos"
     Project     = "LAB04"
   }
 }
+
+# Creación del Listener para el ALB
+resource "aws_lb_listener" "web_listener" {
+  load_balancer_arn = aws_lb.ALB-Lab4.arn
+  port              = 80
+  protocol          = "HTTP"
+  //ssl_policy        = "ELBSecurityPolicy-2016-08"
+  //certificate_arn   = aws_acm_certificate.ssl_cert.arn
+
+  default_action {
+    type = "forward"
+    target_group_arn = aws_lb_target_group.TG-Lab4.arn
+  }
+    tags = {
+    Environment = "Prod"
+    Owner       = "Marcos"
+    Project     = "LAB04"
+  }
+}
+
+/*----------------------------------------------------------------
+resource "aws_acm_certificate" "ssl_cert" {
+  domain_name       = "lab4.hackaboss.com"
+  validation_method = "DNS"
+  tags = {
+    Name        = "Certificado SSL"
+    Env         = "Hack-a-Boss"
+    Environment = "Prod"
+    Owner       = "Marcos"
+    Project     = "LAB04"
+  }
+}
+
+resource "aws_acm_certificate_validation" "ssl_cert_validation" {
+  certificate_arn         = aws_acm_certificate.ssl_cert.arn
+  validation_record_fqdns = [for record in aws_route53_record.ssl_cert_validation : record.fqdn]
+
+}
+
+
+resource "aws_route53_zone" "internal" {
+  name = "lab4.hackaboss.com" # Dominio interno gratuito
+  vpc {
+    vpc_id = module.vpc.vpc_id
+  }
+}
+
+resource "aws_route53_record" "ssl_cert_validation" {
+  for_each = { for dvo in aws_acm_certificate.ssl_cert.domain_validation_options : dvo.domain_name => dvo }
+
+  name    = each.value.resource_record_name
+  type    = each.value.resource_record_type
+  records = [each.value.resource_record_value]
+  zone_id = aws_route53_zone.internal.zone_id
+  ttl     = 60
+}
+
+resource "aws_route53_record" "web_record" {
+  zone_id = aws_route53_zone.internal.id
+  name    = "lab4.hackaboss.com"
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.ALB-Lab4.name
+    zone_id                = aws_lb.ALB-Lab4.zone_id
+    evaluate_target_health = false
+  }
+}
+*/
 
