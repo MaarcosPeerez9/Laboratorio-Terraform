@@ -51,9 +51,8 @@ resource "aws_iam_role" "ec2_ssm_role" {
 }
 
 // Asignamos la política SSM al Rol
-resource "aws_iam_policy_attachment" "ssm_policy_attachment" {
-  name       = "ssm-policy-attachment"
-  roles      = [aws_iam_role.ec2_ssm_role.name]
+resource "aws_iam_role_policy_attachment" "ssm_policy_attachment" {
+  role       = aws_iam_role.ec2_ssm_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
@@ -69,7 +68,7 @@ resource "aws_security_group" "Web_SG" {
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [module.vpc.vpc_cidr_block]
   }
   egress {
     from_port   = 0
@@ -132,7 +131,7 @@ resource "aws_security_group" "EFS_SG" {
 }
 
 //Security group para el Load Balancer
-resource "aws_security_group" "LoadBalancer_SG" {
+resource "aws_security_group" "HTTPS-SG" {
   vpc_id = module.vpc.vpc_id
   ingress {
     from_port   = 443
@@ -147,10 +146,29 @@ resource "aws_security_group" "LoadBalancer_SG" {
     cidr_blocks = ["0.0.0.0/0"]
   }
   tags = {
-    Name        = "LoadBalancer_SG"
+    Name        = "HTTPS-SG"
     Environment = "Prod"
     Owner       = "Marcos"
     Project     = "LAB04"
+  }
+}
+
+resource "aws_security_group" "instance_security_group" {
+  name   = "instance-sg"
+  vpc_id = module.vpc.vpc_id
+
+  ingress {
+    from_port       = 80 # Puerto del health check
+    to_port         = 80
+    protocol        = "tcp"
+    security_groups = [aws_security_group.Web_SG.id] # Solo permite tráfico del ALB
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 }
 
@@ -182,7 +200,7 @@ resource "aws_db_instance" "db_instance_a" {
 }
 
 resource "aws_secretsmanager_secret" "db_password" {
-  name = "password"
+  name = "password2"
 
   tags = {
     Environment = "Prod"
@@ -216,6 +234,7 @@ resource "aws_launch_template" "LT-lab04" {
   network_interfaces {
     associate_public_ip_address = false
     subnet_id                   = module.vpc.private_subnets[0]
+    security_groups = [aws_security_group.instance_security_group.id]
   }
 
   # Codificamos el user_data en Base64
@@ -248,49 +267,24 @@ resource "aws_launch_template" "LT-lab04" {
   }
 }
 
-# Endpoint de VPC para SSM
-resource "aws_vpc_endpoint" "ssm" {
-  vpc_id            = module.vpc.vpc_id
-  service_name      = "com.amazonaws.${var.region}.ssm"
-  vpc_endpoint_type = "Interface"
-  subnet_ids        = module.vpc.private_subnets
+resource "aws_autoscaling_group" "ASG-Lab4" {
+  desired_capacity    = var.min_size
+  max_size            = var.max_size
+  min_size            = var.min_size
+  vpc_zone_identifier = module.vpc.private_subnets
 
-  security_group_ids = [
-    aws_security_group.ssm_endpoint_sg.id
-  ]
-
-   tags = {
-    Name        = "Endpoint-SSM"
-    Environment = "Prod"
-    Owner       = "Marcos"
-    Project     = "LAB04"
-  }
-}
-
-resource "aws_security_group" "ssm_endpoint_sg" {
-  name        = "ssm-endpoint-sg"
-  description = "Security group para SSM VPC endpoint"
-  vpc_id      = module.vpc.vpc_id
-
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr]  
+  launch_template {
+    id      = aws_launch_template.LT-lab04.id
+    version = "$Latest"
   }
 
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+  target_group_arns = [aws_lb_target_group.TG-Lab4.arn]
 
-  tags = {
-    Name = "SSM Endpoint SG"
-    Environment = "Prod"
-    Owner       = "Marcos"
-    Project     = "LAB04"
+  health_check_type         = "EC2"
+  health_check_grace_period = 300
+
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
@@ -298,11 +292,10 @@ resource "aws_security_group" "ssm_endpoint_sg" {
 resource "aws_lb" "ALB-Lab4" {
   name               = "ALB-Lab4"
   load_balancer_type = "application"
-  security_groups    = [aws_security_group.LoadBalancer_SG.id, aws_security_group.Web_SG.id]
+  security_groups    = [aws_security_group.Web_SG.id]
   subnets            = module.vpc.public_subnets
 
-  enable_deletion_protection = false
-  idle_timeout               = 60
+  idle_timeout = 60
 
   tags = {
     Name        = "ALB-Lab4"
@@ -318,15 +311,14 @@ resource "aws_lb_target_group" "TG-Lab4" {
   port        = 80
   protocol    = "HTTP"
   vpc_id      = module.vpc.vpc_id
-  target_type = "instance"
 
   health_check {
-    path                = "/"
-    protocol            = "HTTP"
+    path                = "/health"  # Asegúrate de que este path esté disponible en tus instancias
     interval            = 30
     timeout             = 5
-    healthy_threshold   = 2
+    healthy_threshold   = 3
     unhealthy_threshold = 2
+    matcher             = "200"  # Espera una respuesta 200 de tu aplicación
   }
 
   tags = {
@@ -346,10 +338,10 @@ resource "aws_lb_listener" "web_listener" {
   //certificate_arn   = aws_acm_certificate.ssl_cert.arn
 
   default_action {
-    type = "forward"
+    type             = "forward"
     target_group_arn = aws_lb_target_group.TG-Lab4.arn
   }
-    tags = {
+  tags = {
     Environment = "Prod"
     Owner       = "Marcos"
     Project     = "LAB04"
@@ -405,24 +397,3 @@ resource "aws_route53_record" "web_record" {
   }
 }
 */
-
-resource "aws_autoscaling_group" "ASG-Lab4" {
-  desired_capacity     = var.min_size
-  max_size             = var.max_size
-  min_size             = var.min_size
-  vpc_zone_identifier  = module.vpc.private_subnets
-
-  launch_template {
-    id      = aws_launch_template.LT-lab04.id
-    version = "$Latest"
-  }
-
-  target_group_arns = [aws_lb_target_group.TG-Lab4.arn]
-
-  health_check_type         = "EC2"
-  health_check_grace_period = 300
-
-  lifecycle {
-    create_before_destroy = true
-  }  
-}

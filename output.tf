@@ -65,5 +65,6 @@ output "db_password_secret_version_id" {
 }
 
 output "asg_id" {
-  value = aws_autoscaling_group.ASG-Lab4.id
+  description = "ID del Auto Scaling Group"
+  value       = aws_autoscaling_group.ASG-Lab4.id
 }
