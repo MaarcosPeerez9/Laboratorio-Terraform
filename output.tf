@@ -68,3 +68,8 @@ output "asg_id" {
   description = "ID del Auto Scaling Group"
   value       = aws_autoscaling_group.ASG-Lab4.id
 }
+
+output "endpoint_db" {
+  description = "Endpoint de la base de datos"
+  value       = aws_db_instance.db_instance_a.endpoint
+}

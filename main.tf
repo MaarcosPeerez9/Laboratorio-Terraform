@@ -178,7 +178,7 @@ resource "aws_db_subnet_group" "Postgres_DB" {
 }
 
 resource "aws_db_instance" "db_instance_a" {
-  identifier             = "web-db-a"
+  identifier             = "db-wp"
   allocated_storage      = 20
   storage_type           = "gp3"
   engine                 = "postgres"
@@ -199,8 +199,9 @@ resource "aws_db_instance" "db_instance_a" {
   }
 }
 
+
 resource "aws_secretsmanager_secret" "db_password" {
-  name = "password2"
+  name = "password3"
 
   tags = {
     Environment = "Prod"
@@ -234,32 +235,17 @@ resource "aws_launch_template" "LT-lab04" {
   network_interfaces {
     associate_public_ip_address = false
     subnet_id                   = module.vpc.private_subnets[0]
-    security_groups = [aws_security_group.instance_security_group.id]
+    security_groups             = [aws_security_group.instance_security_group.id]
   }
 
   # Codificamos el user_data en Base64
-  user_data = base64encode(<<EOF
+  user_data = base64encode(<<-EOF
     #!/bin/bash
     yum update -y
-    yum install -y httpd php php-pgsql php-gd amazon-linux-extras
-    yum install -y aws-cli
-    wget https://wordpress.org/latest.tar.gz
-    tar -xzf latest.tar.gz -C /var/www/html --strip-components=1
-    chown -R apache:apache /var/www/html
-    chmod -R 755 /var/www/html
-    cd /var/www/html
-    cp wp-config-sample.php wp-config.php
-    sed -i "s/database_name_here/webdb/g" wp-config.php
-    sed -i "s/username_here/${var.db_username}/g" wp-config.php
-    DB_PASSWORD=$(aws secretsmanager get-secret-value --secret-id ${aws_secretsmanager_secret.db_password.id} --query SecretString --output text)
-    sed -i "s/password_here/$DB_PASSWORD/g" wp-config.php
-    get https://github.com/kevinoid/postgresql-for-wordpress/archive/master.zip
-    unzip master.zip
-    mv postgresql-for-wordpress-master /var/www/html/wp-content/pg4wp
-    cp /var/www/html/wp-content/pg4wp/db.php /var/www/html/wp-content/
-    systemctl enable httpd
-    systemctl start httpd
-    EOF
+    cd /var/www/html/wordpress
+    sed -i "s/localhost/${aws_db_instance.db_instance_a.endpoint}/g" wp-config.php
+    systemctl restart httpd
+  EOF
   )
 
   lifecycle {
@@ -307,18 +293,18 @@ resource "aws_lb" "ALB-Lab4" {
 
 # Creación del Target Group para el ALB
 resource "aws_lb_target_group" "TG-Lab4" {
-  name        = "TG-Lab4"
-  port        = 80
-  protocol    = "HTTP"
-  vpc_id      = module.vpc.vpc_id
+  name     = "TG-Lab4"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = module.vpc.vpc_id
 
   health_check {
-    path                = "/health"  # Asegúrate de que este path esté disponible en tus instancias
+    path                = "/health" # Asegúrate de que este path esté disponible en tus instancias
     interval            = 30
     timeout             = 5
     healthy_threshold   = 3
     unhealthy_threshold = 2
-    matcher             = "200"  # Espera una respuesta 200 de tu aplicación
+    matcher             = "200" # Espera una respuesta 200 de tu aplicación
   }
 
   tags = {
