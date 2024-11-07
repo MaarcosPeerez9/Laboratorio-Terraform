@@ -31,7 +31,7 @@ output "nat_gateway_id" {
 # Output del Security Group para la Web
 output "web_security_group_id" {
   description = "ID del Security Group para la Web"
-  value       = aws_security_group.Web_SG.id
+  value       = aws_security_group.HTTP-SG.id
 }
 
 # Output del Security Group para la Base de Datos

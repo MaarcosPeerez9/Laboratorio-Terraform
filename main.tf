@@ -8,6 +8,31 @@ terraform {
   }
 }
 
+terraform {
+  backend "s3" {
+    bucket         = "bucket-LAB4"
+    key            = "bucket/estado/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "tabla-bloqueo-terraform"
+    encrypt        = true
+  }
+}
+
+resource "aws_dynamodb_table" "terraform_lock" {
+  name           = "tabla-bloqueo-terraform"
+  billing_mode   = "PAY_PER_REQUEST"
+  hash_key       = "LockID"
+
+  attribute {
+    name = "LockID"
+    type = "S"
+  }
+}
+
+resource "aws_s3_bucket" "bucket-LAB4" {
+  bucket = "bucket-LAB4"
+}
+
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "5.15.0"
@@ -62,14 +87,15 @@ resource "aws_iam_instance_profile" "ec2_ssm_instance_profile" {
 }
 
 //Security group http
-resource "aws_security_group" "Web_SG" {
+resource "aws_security_group" "HTTP-SG" {
   vpc_id = module.vpc.vpc_id
   ingress {
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
-    cidr_blocks = [module.vpc.vpc_cidr_block]
+    cidr_blocks = ["0.0.0.0/0"]
   }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -77,7 +103,7 @@ resource "aws_security_group" "Web_SG" {
     cidr_blocks = ["0.0.0.0/0"]
   }
   tags = {
-    Name        = "Web_SG"
+    Name        = "HTTP-SG"
     Environment = "Prod"
     Owner       = "Marcos"
     Project     = "LAB04"
@@ -91,7 +117,7 @@ resource "aws_security_group" "Database_SG" {
     from_port       = 5432
     to_port         = 5432
     protocol        = "tcp"
-    security_groups = [aws_security_group.Web_SG.id]
+    security_groups = [aws_security_group.HTTP-SG.id]
   }
   egress {
     from_port   = 0
@@ -108,13 +134,13 @@ resource "aws_security_group" "Database_SG" {
 }
 
 //Security group para el EFS
-resource "aws_security_group" "EFS_SG" {
+resource "aws_security_group" "EFS-SG" {
   vpc_id = module.vpc.vpc_id
   ingress {
     from_port       = 2049
     to_port         = 2049
     protocol        = "tcp"
-    security_groups = [aws_security_group.Web_SG.id]
+    security_groups = [aws_security_group.HTTP-SG.id]
   }
   egress {
     from_port   = 0
@@ -130,7 +156,7 @@ resource "aws_security_group" "EFS_SG" {
   }
 }
 
-//Security group para el Load Balancer
+//Security group 443
 resource "aws_security_group" "HTTPS-SG" {
   vpc_id = module.vpc.vpc_id
   ingress {
@@ -153,7 +179,7 @@ resource "aws_security_group" "HTTPS-SG" {
   }
 }
 
-resource "aws_security_group" "instance_security_group" {
+resource "aws_security_group" "instance-SG" {
   name   = "instance-sg"
   vpc_id = module.vpc.vpc_id
 
@@ -161,7 +187,14 @@ resource "aws_security_group" "instance_security_group" {
     from_port       = 80 # Puerto del health check
     to_port         = 80
     protocol        = "tcp"
-    security_groups = [aws_security_group.Web_SG.id] # Solo permite tráfico del ALB
+    security_groups = [aws_security_group.HTTP-SG.id] # Solo permite tráfico del ALB
+  }
+
+  ingress {
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   egress {
@@ -199,9 +232,8 @@ resource "aws_db_instance" "db_instance_a" {
   }
 }
 
-
 resource "aws_secretsmanager_secret" "db_password" {
-  name = "password3"
+  name = "password8"
 
   tags = {
     Environment = "Prod"
@@ -235,22 +267,11 @@ resource "aws_launch_template" "LT-lab04" {
   network_interfaces {
     associate_public_ip_address = false
     subnet_id                   = module.vpc.private_subnets[0]
-    security_groups             = [aws_security_group.instance_security_group.id]
+    security_groups             = [aws_security_group.instance-SG.id]
   }
 
   # Codificamos el user_data en Base64
-  user_data = base64encode(<<-EOF
-    #!/bin/bash
-    yum update -y
-    cd /var/www/html/wordpress
-    sed -i "s/localhost/${aws_db_instance.db_instance_a.endpoint}/g" wp-config.php
-    systemctl restart httpd
-  EOF
-  )
-
-  lifecycle {
-    create_before_destroy = true
-  }
+  user_data = base64encode(file("user-data.sh"))
 }
 
 resource "aws_autoscaling_group" "ASG-Lab4" {
@@ -277,11 +298,10 @@ resource "aws_autoscaling_group" "ASG-Lab4" {
 # Creación del Application Load Balancer
 resource "aws_lb" "ALB-Lab4" {
   name               = "ALB-Lab4"
+  internal           = false
   load_balancer_type = "application"
-  security_groups    = [aws_security_group.Web_SG.id]
+  security_groups    = [aws_security_group.HTTP-SG.id]
   subnets            = module.vpc.public_subnets
-
-  idle_timeout = 60
 
   tags = {
     Name        = "ALB-Lab4"
@@ -296,15 +316,17 @@ resource "aws_lb_target_group" "TG-Lab4" {
   name     = "TG-Lab4"
   port     = 80
   protocol = "HTTP"
+  target_type = "instance"
   vpc_id   = module.vpc.vpc_id
 
   health_check {
-    path                = "/health" # Asegúrate de que este path esté disponible en tus instancias
+    path                = "/health/healthcheck.html"
+    protocol            = "HTTP"
+    matcher             = "200"
     interval            = 30
     timeout             = 5
-    healthy_threshold   = 3
+    healthy_threshold   = 2
     unhealthy_threshold = 2
-    matcher             = "200" # Espera una respuesta 200 de tu aplicación
   }
 
   tags = {
@@ -334,6 +356,75 @@ resource "aws_lb_listener" "web_listener" {
   }
 }
 
+resource "aws_route53_zone" "internal" {
+  name = "lab4.hackaboss.com" # Dominio interno gratuito
+  vpc {
+    vpc_id = module.vpc.vpc_id
+  }
+}
+
+resource "aws_route53_record" "web_record" {
+  zone_id = aws_route53_zone.internal.zone_id
+  name    = "lab4.hackaboss.com"
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.ALB-Lab4.dns_name
+    zone_id                = aws_lb.ALB-Lab4.zone_id
+    evaluate_target_health = true
+  }
+}
+
+resource "aws_route53_record" "rds_record" {
+  zone_id = aws_route53_zone.internal.zone_id
+  name    = "rds.internal.lab4.com"
+  type    = "CNAME"
+  ttl     = 30
+  records = [aws_db_instance.db_instance_a.address]
+
+}
+
+/*# Define el bucket de S3
+resource "aws_s3_bucket" "bucketS3-LAB4" {
+  bucket = "bucketS3-Mp0-LAB4"
+  acl    = "private"
+
+  tags = {
+    Environment = "Prod"
+    Owner       = "Marcos"
+    Project     = "LAB04"
+  }
+}
+
+# Política para el Bucket S3 que permite acceso público sólo para leer las imágenes
+resource "aws_s3_bucket_policy" "public_access_policy" {
+  bucket = aws_s3_bucket.bucketS3-LAB4.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "PublicReadGetObject"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = "s3:GetObject"
+        Resource  = "${aws_s3_bucket.bucketS3-LAB4.arn}/*"
+      }
+    ]
+  })
+}
+
+# Versionado para el bucket de S3
+resource "aws_s3_bucket_versioning" "versioning" {
+  bucket = aws_s3_bucket.bucketS3-LAB4.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+*/
+
 /*----------------------------------------------------------------
 resource "aws_acm_certificate" "ssl_cert" {
   domain_name       = "lab4.hackaboss.com"
@@ -353,14 +444,6 @@ resource "aws_acm_certificate_validation" "ssl_cert_validation" {
 
 }
 
-
-resource "aws_route53_zone" "internal" {
-  name = "lab4.hackaboss.com" # Dominio interno gratuito
-  vpc {
-    vpc_id = module.vpc.vpc_id
-  }
-}
-
 resource "aws_route53_record" "ssl_cert_validation" {
   for_each = { for dvo in aws_acm_certificate.ssl_cert.domain_validation_options : dvo.domain_name => dvo }
 
@@ -369,17 +452,5 @@ resource "aws_route53_record" "ssl_cert_validation" {
   records = [each.value.resource_record_value]
   zone_id = aws_route53_zone.internal.zone_id
   ttl     = 60
-}
-
-resource "aws_route53_record" "web_record" {
-  zone_id = aws_route53_zone.internal.id
-  name    = "lab4.hackaboss.com"
-  type    = "A"
-
-  alias {
-    name                   = aws_lb.ALB-Lab4.name
-    zone_id                = aws_lb.ALB-Lab4.zone_id
-    evaluate_target_health = false
-  }
 }
 */

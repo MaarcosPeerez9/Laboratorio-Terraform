@@ -45,7 +45,7 @@ variable "instance_type" {
 
 variable "ami_id" {
   description = "ID de la AMI"
-  default     = "ami-072f5f1ddf2095248"
+  default     = "ami-04c36c7ae211ddd7f"
 }
 
 variable "min_size" {
