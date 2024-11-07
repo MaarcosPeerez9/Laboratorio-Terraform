@@ -8,31 +8,6 @@ terraform {
   }
 }
 
-terraform {
-  backend "s3" {
-    bucket         = "bucket-LAB4"
-    key            = "bucket/estado/terraform.tfstate"
-    region         = "us-east-1"
-    dynamodb_table = "tabla-bloqueo-terraform"
-    encrypt        = true
-  }
-}
-
-resource "aws_dynamodb_table" "terraform_lock" {
-  name           = "tabla-bloqueo-terraform"
-  billing_mode   = "PAY_PER_REQUEST"
-  hash_key       = "LockID"
-
-  attribute {
-    name = "LockID"
-    type = "S"
-  }
-}
-
-resource "aws_s3_bucket" "bucket-LAB4" {
-  bucket = "bucket-LAB4"
-}
-
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "5.15.0"
@@ -210,15 +185,16 @@ resource "aws_db_subnet_group" "Postgres_DB" {
   subnet_ids = module.vpc.private_subnets
 }
 
-resource "aws_db_instance" "db_instance_a" {
-  identifier             = "db-wp"
+resource "aws_db_instance" "wordpressDB" {
+  identifier             = "wordpressdb"
+  db_name = "wordpressdb"
   allocated_storage      = 20
   storage_type           = "gp3"
   engine                 = "postgres"
   engine_version         = "16.3"
   instance_class         = "db.t3.micro"
-  username               = var.db_username
-  password               = aws_secretsmanager_secret_version.db_password.secret_string
+  username               = "dbuser"
+  password               = "admin1234"
   db_subnet_group_name   = aws_db_subnet_group.Postgres_DB.name
   vpc_security_group_ids = [aws_security_group.Database_SG.id]
   multi_az               = true
@@ -232,8 +208,36 @@ resource "aws_db_instance" "db_instance_a" {
   }
 }
 
+resource "aws_route53_zone" "internal" {
+  name = "lab4.hackaboss.com" # Dominio interno gratuito
+  vpc {
+    vpc_id = module.vpc.vpc_id
+  }
+}
+
+resource "aws_route53_record" "rds_record" {
+  zone_id = aws_route53_zone.internal.zone_id
+  name    = "rds.lab4.hackaboss.com"
+  type    = "CNAME"
+  ttl     = 300
+  records = [aws_db_instance.wordpressDB.address]
+
+}
+
+resource "aws_route53_record" "web_record" {
+  zone_id = aws_route53_zone.internal.zone_id
+  name    = "web.lab4.hackaboss.com"
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.ALB-Lab4.dns_name
+    zone_id                = aws_lb.ALB-Lab4.zone_id
+    evaluate_target_health = true
+  }
+}
+
 resource "aws_secretsmanager_secret" "db_password" {
-  name = "password8"
+  name = "password11"
 
   tags = {
     Environment = "Prod"
@@ -354,34 +358,6 @@ resource "aws_lb_listener" "web_listener" {
     Owner       = "Marcos"
     Project     = "LAB04"
   }
-}
-
-resource "aws_route53_zone" "internal" {
-  name = "lab4.hackaboss.com" # Dominio interno gratuito
-  vpc {
-    vpc_id = module.vpc.vpc_id
-  }
-}
-
-resource "aws_route53_record" "web_record" {
-  zone_id = aws_route53_zone.internal.zone_id
-  name    = "lab4.hackaboss.com"
-  type    = "A"
-
-  alias {
-    name                   = aws_lb.ALB-Lab4.dns_name
-    zone_id                = aws_lb.ALB-Lab4.zone_id
-    evaluate_target_health = true
-  }
-}
-
-resource "aws_route53_record" "rds_record" {
-  zone_id = aws_route53_zone.internal.zone_id
-  name    = "rds.internal.lab4.com"
-  type    = "CNAME"
-  ttl     = 30
-  records = [aws_db_instance.db_instance_a.address]
-
 }
 
 /*# Define el bucket de S3
