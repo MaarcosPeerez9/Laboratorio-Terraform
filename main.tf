@@ -6,6 +6,13 @@ terraform {
       version = ">=3.0"
     }
   }
+  backend "s3" {
+    bucket         = "buckets3-lab4-mp"
+    key            = "prod/lab4.tfstate" # Define la ruta dentro del bucket
+    region         = "us-east-1"  # Cambia a la región de tu bucket
+    dynamodb_table = "terraform-state-locks" # Tabla para el locking de estado
+    encrypt        = true
+  }
 }
 
 module "vpc" {
@@ -89,10 +96,10 @@ resource "aws_security_group" "HTTP-SG" {
 resource "aws_security_group" "Database_SG" {
   vpc_id = module.vpc.vpc_id
   ingress {
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [aws_security_group.HTTP-SG.id]
+    from_port = 0
+    to_port   = 0
+    protocol  = "tcp"
+    //security_groups = [aws_security_group.HTTP-SG.id]
   }
   egress {
     from_port   = 0
@@ -112,10 +119,10 @@ resource "aws_security_group" "Database_SG" {
 resource "aws_security_group" "EFS-SG" {
   vpc_id = module.vpc.vpc_id
   ingress {
-    from_port       = 2049
-    to_port         = 2049
-    protocol        = "tcp"
-    security_groups = [aws_security_group.HTTP-SG.id]
+    from_port = 2049
+    to_port   = 2049
+    protocol  = "tcp"
+    //security_groups = [aws_security_group.HTTP-SG.id]
   }
   egress {
     from_port   = 0
@@ -165,13 +172,6 @@ resource "aws_security_group" "instance-SG" {
     security_groups = [aws_security_group.HTTP-SG.id] # Solo permite tráfico del ALB
   }
 
-  ingress {
-    from_port   = 5432
-    to_port     = 5432
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
   egress {
     from_port   = 0
     to_port     = 0
@@ -187,7 +187,7 @@ resource "aws_db_subnet_group" "Postgres_DB" {
 
 resource "aws_db_instance" "wordpressDB" {
   identifier             = "wordpressdb"
-  db_name = "wordpressdb"
+  db_name                = "wordpressdb"
   allocated_storage      = 20
   storage_type           = "gp3"
   engine                 = "postgres"
@@ -237,7 +237,7 @@ resource "aws_route53_record" "web_record" {
 }
 
 resource "aws_secretsmanager_secret" "db_password" {
-  name = "password11"
+  name = "password13"
 
   tags = {
     Environment = "Prod"
@@ -304,7 +304,7 @@ resource "aws_lb" "ALB-Lab4" {
   name               = "ALB-Lab4"
   internal           = false
   load_balancer_type = "application"
-  security_groups    = [aws_security_group.HTTP-SG.id]
+  security_groups    = [aws_security_group.HTTP-SG.id, aws_security_group.HTTPS-SG.id]
   subnets            = module.vpc.public_subnets
 
   tags = {
@@ -317,11 +317,11 @@ resource "aws_lb" "ALB-Lab4" {
 
 # Creación del Target Group para el ALB
 resource "aws_lb_target_group" "TG-Lab4" {
-  name     = "TG-Lab4"
-  port     = 80
-  protocol = "HTTP"
+  name        = "TG-Lab4"
+  port        = 80
+  protocol    = "HTTP"
   target_type = "instance"
-  vpc_id   = module.vpc.vpc_id
+  vpc_id      = module.vpc.vpc_id
 
   health_check {
     path                = "/health/healthcheck.html"
@@ -330,7 +330,7 @@ resource "aws_lb_target_group" "TG-Lab4" {
     interval            = 30
     timeout             = 5
     healthy_threshold   = 2
-    unhealthy_threshold = 2
+    unhealthy_threshold = 2 
   }
 
   tags = {
@@ -340,7 +340,6 @@ resource "aws_lb_target_group" "TG-Lab4" {
     Project     = "LAB04"
   }
 }
-
 # Creación del Listener para el ALB
 resource "aws_lb_listener" "web_listener" {
   load_balancer_arn = aws_lb.ALB-Lab4.arn
@@ -360,11 +359,15 @@ resource "aws_lb_listener" "web_listener" {
   }
 }
 
-/*# Define el bucket de S3
-resource "aws_s3_bucket" "bucketS3-LAB4" {
-  bucket = "bucketS3-Mp0-LAB4"
+# Define el bucket de S3
+resource "aws_s3_bucket" "terraform_state" {
+  bucket = "buckets3-lab4-mp"
   acl    = "private"
 
+  versioning {
+    enabled = true
+  }
+
   tags = {
     Environment = "Prod"
     Owner       = "Marcos"
@@ -372,61 +375,29 @@ resource "aws_s3_bucket" "bucketS3-LAB4" {
   }
 }
 
-# Política para el Bucket S3 que permite acceso público sólo para leer las imágenes
-resource "aws_s3_bucket_policy" "public_access_policy" {
-  bucket = aws_s3_bucket.bucketS3-LAB4.id
+resource "aws_s3_bucket_public_access_block" "terraform_state_block" {
+  bucket = aws_s3_bucket.terraform_state.id
 
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid       = "PublicReadGetObject"
-        Effect    = "Allow"
-        Principal = "*"
-        Action    = "s3:GetObject"
-        Resource  = "${aws_s3_bucket.bucketS3-LAB4.arn}/*"
-      }
-    ]
-  })
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 }
 
-# Versionado para el bucket de S3
-resource "aws_s3_bucket_versioning" "versioning" {
-  bucket = aws_s3_bucket.bucketS3-LAB4.id
+resource "aws_dynamodb_table" "terraform_locks" {
+  name         = "terraform-state-locks"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "LockID"
 
-  versioning_configuration {
-    status = "Enabled"
+  attribute {
+    name = "LockID"
+    type = "S"
   }
-}
 
-*/
-
-/*----------------------------------------------------------------
-resource "aws_acm_certificate" "ssl_cert" {
-  domain_name       = "lab4.hackaboss.com"
-  validation_method = "DNS"
   tags = {
-    Name        = "Certificado SSL"
-    Env         = "Hack-a-Boss"
     Environment = "Prod"
     Owner       = "Marcos"
     Project     = "LAB04"
   }
 }
 
-resource "aws_acm_certificate_validation" "ssl_cert_validation" {
-  certificate_arn         = aws_acm_certificate.ssl_cert.arn
-  validation_record_fqdns = [for record in aws_route53_record.ssl_cert_validation : record.fqdn]
-
-}
-
-resource "aws_route53_record" "ssl_cert_validation" {
-  for_each = { for dvo in aws_acm_certificate.ssl_cert.domain_validation_options : dvo.domain_name => dvo }
-
-  name    = each.value.resource_record_name
-  type    = each.value.resource_record_type
-  records = [each.value.resource_record_value]
-  zone_id = aws_route53_zone.internal.zone_id
-  ttl     = 60
-}
-*/
