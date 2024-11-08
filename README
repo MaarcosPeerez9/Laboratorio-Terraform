@@ -1,3 +1,102 @@
-terraform plan
-terraform validate
-terraform apply
+# Arquitectura de Alta Disponibilidad en AWS - LAB04
+
+## Descripción General
+Esta arquitectura implementa una infraestructura altamente disponible y escalable en AWS, diseñada para aplicaciones web empresariales con necesidades de alto rendimiento y disponibilidad.
+
+## Componentes Principales
+
+### Networking
+- **VPC** dedicada con subredes públicas y privadas
+- Configuración Multi-AZ en us-east-1
+- NAT Gateway para acceso a internet desde subredes privadas
+- Route53 para gestión de DNS interno
+
+### Capa de Aplicación
+- **Auto Scaling Group** con instancias EC2
+- Launch Template con configuración personalizada
+- Application Load Balancer (ALB) con soporte HTTP/HTTPS
+- Certificados SSL/TLS gestionados por ACM
+
+### Almacenamiento
+- **RDS PostgreSQL** en configuración Multi-AZ
+- **EFS** para almacenamiento compartido
+- **S3** para almacenamiento de objetos estáticos
+- Backups automáticos configurados
+
+### Caché
+- **ElastiCache Redis** en configuración Multi-AZ
+- Replicación automática y failover
+- Cifrado en tránsito y en reposo
+- Políticas de memoria optimizadas
+
+### Seguridad
+- Security Groups específicos por servicio
+- IAM Roles y Políticas granulares
+- Cifrado en tránsito y en reposo
+- Acceso a través de AWS Systems Manager
+
+### Monitoreo y Alertas
+- **CloudWatch Dashboard** personalizado
+- Métricas de rendimiento clave
+- Alarmas configuradas para:
+  - CPU y memoria
+  - Conexiones de base de datos
+  - Rendimiento de caché
+  - Estado del sistema
+- Notificaciones vía SNS
+
+## Características de Alta Disponibilidad
+- Arquitectura Multi-AZ
+- Auto-scaling automático
+- Failover automático para RDS y Redis
+- Balanceo de carga con health checks
+- Backups automatizados
+
+## Escalabilidad
+- Auto Scaling Groups para instancias EC2
+- Escalado vertical y horizontal soportado
+- Cache distribuido con Redis
+- Almacenamiento escalable con EFS y S3
+
+## Mantenimiento y Operaciones
+- Ventanas de mantenimiento programadas
+- Backups automáticos
+- Monitoreo proactivo
+- Logs centralizados
+
+## Tecnologías Utilizadas
+- Terraform para Infrastructure as Code
+- AWS como proveedor de nube
+- Systems Manager para gestión de instancias
+- CloudWatch para monitoreo y logs
+
+## Requisitos
+- Terraform >= 0.12
+- AWS CLI configurado
+- Permisos de AWS adecuados
+
+## Despliegue
+La infraestructura se despliega utilizando Terraform con estado remoto en S3 y bloqueo mediante DynamoDB para trabajo en equipo seguro.
+
+## Consideraciones de Costos
+- Instancias EC2 en subredes privadas
+- RDS Multi-AZ
+- ElastiCache Redis con réplicas
+- NAT Gateway
+- ALB y almacenamiento
+- CloudWatch Logs y métricas
+
+## Mantenimiento
+- Actualizaciones gestionadas mediante ventanas de mantenimiento
+- Backups automáticos con retención configurable
+- Monitoreo continuo con CloudWatch
+- Alertas automáticas vía SNS
+
+## Seguridad
+- Acceso restringido por Security Groups
+- Cifrado en tránsito y en reposo
+- IAM roles con principio de mínimo privilegio
+- Certificados SSL/TLS gestionados
+
+## Autor
+Marcos Pérez

@@ -127,7 +127,7 @@ resource "aws_security_group" "EFS-SG" {
     from_port = 2049
     to_port   = 2049
     protocol  = "tcp"
-    //security_groups = [aws_security_group.HTTP-SG.id]
+    cidr_blocks = ["0.0.0.0/0"]
   }
   egress {
     from_port   = 0
@@ -175,7 +175,7 @@ resource "aws_security_group" "instance-SG" {
     from_port       = 80 # Puerto del health check
     to_port         = 80
     protocol        = "tcp"
-    security_groups = [aws_security_group.HTTP-SG.id] # Solo permite tráfico del ALB
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   egress {
@@ -454,7 +454,7 @@ resource "aws_route53_zone" "public" {
 
 //Tabla DynamoDB para el state locking
 resource "aws_dynamodb_table" "terraform_state_lock" {
-  count          = var.create_dynamodb_table ? 1 : 0  # Variable condicional
+  count          = var.create_dynamodb_table ? 1 : 0
   name           = "terraform-state-lock"
   billing_mode   = "PAY_PER_REQUEST"
   hash_key       = "LockID"
@@ -761,5 +761,180 @@ resource "aws_iam_role" "backup_role" {
 resource "aws_iam_role_policy_attachment" "backup_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup"
   role       = aws_iam_role.backup_role.name
+}
+
+// Security Group para Redis
+resource "aws_security_group" "redis_sg" {
+  name        = "redis-sg"
+  description = "Security group para Redis"
+  vpc_id      = module.vpc.vpc_id
+
+  ingress {
+    from_port       = 6379
+    to_port         = 6379
+    protocol        = "tcp"
+    security_groups = [aws_security_group.instance-SG.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "Redis-SG"
+    Environment = "Prod"
+    Owner       = "Marcos"
+    Project     = "LAB04"
+  }
+}
+
+// Subnet Group para Redis
+resource "aws_elasticache_subnet_group" "redis_subnet_group" {
+  name       = "redis-subnet-group"
+  subnet_ids = module.vpc.private_subnets
+
+  tags = {
+    Environment = "Prod"
+    Owner       = "Marcos"
+    Project     = "LAB04"
+  }
+}
+
+// Grupo de parámetros para Redis
+resource "aws_elasticache_parameter_group" "redis_parameter_group" {
+  family = "redis7"
+  name   = "redis-params"
+
+  parameter {
+    name  = "maxmemory-policy"
+    value = "volatile-lru"
+  }
+
+  parameter {
+    name  = "maxmemory-samples"
+    value = "10"
+  }
+
+  parameter {
+    name  = "timeout"
+    value = "300"
+  }
+
+  tags = {
+    Environment = "Prod"
+    Owner       = "Marcos"
+    Project     = "LAB04"
+  }
+}
+
+// Grupo de replicación de Redis
+resource "aws_elasticache_replication_group" "redis_cluster" {
+  replication_group_id          = "lab04-redis"
+  description                  = "Cluster Redis para LAB04"
+  node_type                    = "cache.t3.micro"
+  num_cache_clusters           = 2
+  port                         = 6379
+  parameter_group_name         = aws_elasticache_parameter_group.redis_parameter_group.name
+  subnet_group_name            = aws_elasticache_subnet_group.redis_subnet_group.name
+  security_group_ids           = [aws_security_group.redis_sg.id]
+  automatic_failover_enabled   = true
+  multi_az_enabled            = true
+  
+  engine                      = "redis"
+  engine_version              = "7.0"
+  
+  maintenance_window          = "sun:05:00-sun:06:00"
+  snapshot_window            = "04:00-05:00"
+  snapshot_retention_limit   = 7
+
+  at_rest_encryption_enabled = true
+  transit_encryption_enabled = true
+
+  tags = {
+    Environment = "Prod"
+    Owner       = "Marcos"
+    Project     = "LAB04"
+  }
+}
+
+// Registro DNS para Redis
+resource "aws_route53_record" "redis_record" {
+  zone_id = aws_route53_zone.internal.zone_id
+  name    = "redis.lab4.hackaboss.com"
+  type    = "CNAME"
+  ttl     = 300
+  records = [aws_elasticache_replication_group.redis_cluster.primary_endpoint_address]
+}
+
+// Segunda VPC para el peering
+module "vpc_peer" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "5.15.0"
+
+  name = "vpc-peer-lab04"
+  cidr = "10.1.0.0/16"  // Diferente CIDR que la primera VPC
+  azs  = ["us-east-1a", "us-east-1b"]
+
+  private_subnets  = ["10.1.1.0/24", "10.1.2.0/24"]
+  public_subnets   = ["10.1.101.0/24", "10.1.102.0/24"]
+
+  enable_nat_gateway = true
+  single_nat_gateway = true
+
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = {
+    Environment = "Prod"
+    Owner       = "Marcos"
+    Project     = "LAB04"
+  }
+}
+
+// Conexión VPC Peering
+resource "aws_vpc_peering_connection" "peer" {
+  peer_vpc_id   = module.vpc_peer.vpc_id     // ID de la VPC peer
+  vpc_id        = module.vpc.vpc_id          // ID de nuestra VPC principal
+  auto_accept   = true                 
+
+  tags = {
+    Name        = "VPC-Peering-Lab04"
+    Environment = "Prod"
+    Owner       = "Marcos"
+    Project     = "LAB04"
+  }
+}
+
+// Rutas en las tablas de enrutamiento de nuestra VPC principal
+resource "aws_route" "route_to_peer_private" {
+  count                     = length(module.vpc.private_route_table_ids)
+  route_table_id            = module.vpc.private_route_table_ids[count.index]
+  destination_cidr_block    = "10.1.0.0/16"  // CIDR de la VPC peer
+  vpc_peering_connection_id = aws_vpc_peering_connection.peer.id
+}
+
+resource "aws_route" "route_to_peer_public" {
+  count                     = length(module.vpc.public_route_table_ids)
+  route_table_id            = module.vpc.public_route_table_ids[count.index]
+  destination_cidr_block    = "10.1.0.0/16"  // CIDR de la VPC peer
+  vpc_peering_connection_id = aws_vpc_peering_connection.peer.id
+}
+
+// Rutas en las tablas de enrutamiento de la VPC peer
+resource "aws_route" "route_from_peer_private" {
+  count                     = length(module.vpc_peer.private_route_table_ids)
+  route_table_id            = module.vpc_peer.private_route_table_ids[count.index]
+  destination_cidr_block    = var.vpc_cidr    // CIDR de la VPC principal
+  vpc_peering_connection_id = aws_vpc_peering_connection.peer.id
+}
+
+resource "aws_route" "route_from_peer_public" {
+  count                     = length(module.vpc_peer.public_route_table_ids)
+  route_table_id            = module.vpc_peer.public_route_table_ids[count.index]
+  destination_cidr_block    = var.vpc_cidr    // CIDR de la VPC principal
+  vpc_peering_connection_id = aws_vpc_peering_connection.peer.id
 }
 
