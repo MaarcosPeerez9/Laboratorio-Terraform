@@ -1,4 +1,6 @@
 /*
+Intento de cloudfront fallido
+
 resource "aws_cloudfront_distribution" "cdn" {
   origin {
     domain_name = aws_s3_bucket.terraform_state.bucket_regional_domain_name # Origen (Bucket de S3)
