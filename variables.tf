@@ -45,7 +45,7 @@ variable "instance_type" {
 
 variable "ami_id" {
   description = "ID de la AMI"
-  default     = "ami-094af7c98bcdbc0b4"
+  default     = "ami-0fd3300573f287a86"
 }
 
 variable "min_size" {
@@ -66,4 +66,10 @@ variable "db_username" {
 variable "db_pasword" {
   description = "Pasword de la BBDD"
   default     = "admin1234"
+}
+
+variable "create_dynamodb_table" {
+  description = "Whether to create the DynamoDB table"
+  type        = bool
+  default     = false  # Cambiar a true si necesitas crear la tabla
 }
